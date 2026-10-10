@@ -1,0 +1,8 @@
+[
+  {"id":"rational","name":"有理数运算","stage":"七年级上学期"},
+  {"id":"power","name":"有理数的乘方","stage":"七年级上学期"},
+  {"id":"absolute","name":"绝对值与数轴","stage":"七年级上学期"},
+  {"id":"expression","name":"整式加减","stage":"七年级上学期"},
+  {"id":"equation","name":"一元一次方程","stage":"七年级上学期"},
+  {"id":"geometry","name":"几何图形初步","stage":"七年级上学期"}
+]
