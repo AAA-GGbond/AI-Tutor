@@ -3,6 +3,7 @@ import base64
 import json
 import tempfile
 import threading
+import io
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -12,6 +13,17 @@ from server import KNOWLEDGE, empty_profile, merge_profile, validate_analysis
 
 
 class ProfileTests(unittest.TestCase):
+    def test_ocr_text_model_receives_no_images(self):
+        config = {'input_mode': 'ocr_review', 'api_key': 'test', 'model': 'text-model', 'base_url': 'https://example.com/v1', 'prompt': '分析', 'knowledge': KNOWLEDGE}
+        result = {'summary': '识别后分析', 'questions': [self.question()]}
+        response = io.BytesIO(json.dumps({'choices': [{'message': {'content': json.dumps(result)}}]}).encode())
+        with patch('server.urlopen', return_value=response) as call:
+            server.analyze({'name': '测试', 'stage': '七年级上学期', 'profile': json.dumps(empty_profile())}, config, [{'data': 'image-secret'}], '', 'real', '第1题：学生答案 -4')
+        payload = json.loads(call.call_args[0][0].data)
+        self.assertIsInstance(payload['messages'][1]['content'], str)
+        self.assertNotIn('image-secret', json.dumps(payload))
+        self.assertIn('学生答案', payload['messages'][1]['content'])
+
     def question(self, number='1', confidence=.9, status='incorrect'):
         return {'number': number, 'status': status, 'knowledge_id': 'power', 'confidence': confidence, 'reason': '符号错误', 'error_type': '概念错误', 'suggestion': '复习乘方'}
 
@@ -99,6 +111,27 @@ class FlowTests(unittest.TestCase):
                     self.assertNotIn('api_key', saved)
                     self.assertEqual(saved['prompt'], '制作方新提示词')
                     self.assertNotIn('制作方新提示词', json.dumps(request('/api/state'), ensure_ascii=False))
+                    config['mode'] = 'manual'
+                    with urlopen(Request(base + '/api/admin/config', data=json.dumps(config).encode(), headers=admin_headers)):
+                        pass
+                    body['files'][0]['data'] = 'data:image/png;base64,' + base64.b64encode(b'manual-paper').decode()
+                    queued = request('/api/analyze', body)
+                    self.assertTrue(queued['pending'])
+                    self.assertEqual(len(request('/api/state')['pending']), 1)
+                    with urlopen(Request(base + '/api/admin/jobs', headers=admin_headers)) as response:
+                        job = json.load(response)['jobs'][0]
+                    self.assertIn('制作方新提示词', job['material'])
+                    self.assertNotIn('config', job)
+                    invalid = {'id': queued['job_id'], 'action': 'import', 'analysis': {'summary': '坏结果', 'questions': [{'number': '1'}]}}
+                    with self.assertRaises(HTTPError):
+                        urlopen(Request(base + '/api/admin/job', data=json.dumps(invalid).encode(), headers=admin_headers))
+                    result = {'id': queued['job_id'], 'action': 'import', 'analysis': {'summary': '手动分析', 'questions': [ProfileTests().question()]}}
+                    with urlopen(Request(base + '/api/admin/job', data=json.dumps(result).encode(), headers=admin_headers)):
+                        pass
+                    with self.assertRaises(HTTPError):
+                        urlopen(Request(base + '/api/admin/job', data=json.dumps(result).encode(), headers=admin_headers))
+                    self.assertEqual(request('/api/state')['pending'], [])
+                    self.assertEqual(next(s for s in request('/api/state')['students'] if s['id'] == student['id'])['version'], 3)
                 finally:
                     http.shutdown()
                     http.server_close()
